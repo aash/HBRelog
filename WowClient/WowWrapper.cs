@@ -773,6 +773,52 @@ namespace WowClient
             return IsInGame;
         }
 
+        public async Task<bool> CloseActiveFramesAsync()
+        {
+            await Task.Delay(100);
+            return true;
+        }
+
+        public async Task<bool> ExitAsync()
+        {
+            if (IsInGame)
+            {
+                if (!await SendChatAsync("/exit"))
+                {
+                    Console.WriteLine("could not type /exit");
+                    return false;
+                }
+            }
+            else
+            {
+                if (await IsCharacterCreationScreenAsync())
+                {
+                    SendKey(Keys.Escape);
+                    if (!await Utility.WaitUntilAsync(async () => await IsCharacterSelectionScreenAsync(), 10000, 100))
+                    {
+                        Console.WriteLine("wait IsCharacterSelectionScreenAsync == true timeout");
+                        return false;
+                    }
+                }
+                if (await IsCharacterSelectionScreenAsync())
+                {
+                    SendKey(Keys.Escape);
+                    SendKey(Keys.Escape);
+                }
+            }
+            if (!await Utility.WaitUntilAsync(() => WowProcess.HasExited, TimeSpan.FromMinutes(2), 100))
+            {
+                Console.WriteLine("process has not exited");
+                return false;
+            }
+            return true;
+        }
+
+        public async Task<int> MonitorAsync()
+        {
+            
+        }
+
         public string CurrentCharacterRealmCached { get; private set; }
 
         public bool IsInGame

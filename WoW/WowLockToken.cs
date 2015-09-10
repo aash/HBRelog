@@ -3,9 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using GreyMagic;
-using HighVoltz.HBRelog.WoW.FrameXml;
-using HighVoltz.Launcher;
 using System.Windows.Automation;
 
 namespace HighVoltz.HBRelog.WoW
@@ -72,50 +69,6 @@ namespace HighVoltz.HBRelog.WoW
 
                 // get valid Wow process which is logged in and PlayerName the same
                 // as the CharacterName of current profile
-                if (_lockOwner.Settings.ReuseFreeWowProcess && _wowProcess == null)
-			    {
-                    var attachedWoW32Pids = HbRelogManager.Settings.CharacterProfiles.Where(
-                        p => p.TaskManager.WowManager.GameProcess != null).Select(
-                        p => p.TaskManager.WowManager.GameProcess.Id).ToList();
-                    if (_wowProcess != null)
-                        attachedWoW32Pids.Add(_wowProcess.Id);
-                    var wow32Processes = Process.GetProcessesByName("Wow").Where(
-                        p => !Utility.Is64BitProcess(p) && p.Responding && !attachedWoW32Pids.Contains(p.Id));
-                    foreach (var p in wow32Processes)
-                    {
-                        try
-                        {
-                            _lockOwner.LuaManager.Memory = new ExternalProcessReader(p);
-                        }
-                        catch (Exception)
-                        {
-                            continue;
-                        }
-                        HbRelogManager.Settings.GameStateOffset = (uint)WowPatterns.GameStatePattern.Find(_lockOwner.LuaManager.Memory);
-                        HbRelogManager.Settings.LuaStateOffset = (uint)WowPatterns.LuaStatePattern.Find(_lockOwner.LuaManager.Memory);
-                        HbRelogManager.Settings.FocusedWidgetOffset = (uint)WowPatterns.FocusedWidgetPattern.Find(_lockOwner.LuaManager.Memory);
-                        HbRelogManager.Settings.LoadingScreenEnableCountOffset = (uint)WowPatterns.LoadingScreenEnableCountPattern.Find(_lockOwner.LuaManager.Memory);
-                        HbRelogManager.Settings.GlueStateOffset = (uint)WowPatterns.GlueStatePattern.Find(_lockOwner.LuaManager.Memory);
-                        if (_lockOwner.InGame)
-                        {
-                            var playerName = "";
-                            try
-                            {
-                                playerName = (from fontString in UIObject.GetUIObjectsOfType<FontString>(_lockOwner.LuaManager)
-                                              where fontString.IsShown && fontString.Name == "PlayerName"
-                                              select fontString.Text).First();
-                            }
-                            catch (Exception e)
-                            {
-                                _lockOwner.Profile.Log(e.ToString());
-                            }
-                            if (playerName != _lockOwner.Settings.CharacterName) continue;
-                            _wowProcess = p;
-                            _lockOwner.ReusedGameProcess = p;
-                            break;
-                        }
-                    }
-			    }
                 
                 if (_wowProcess != null && Utility.Is64BitProcess(_wowProcess))
 				{
@@ -124,26 +77,6 @@ namespace HighVoltz.HBRelog.WoW
 				}
 
 				// check if a batch file or any .exe besides WoW.exe is used and try to get the child WoW process started by this process.
-
-				if (_launcherPid > 0)
-				{
-                    Process wowProcess = Utility.GetChildProcessByName(_launcherPid, "Wow") 
-                        ?? Utility.GetChildProcessByName(_launcherPid, "WowB")  // Beta
-                        ?? Utility.GetChildProcessByName(_launcherPid, "WowT"); // PTR
-					if (wowProcess != null)
-					{
-						_launcherPid = 0;
-						Helpers.ResumeProcess(wowProcess.Id);
-						_wowProcess = wowProcess;
-					}
-					else
-					{
-						_lockOwner.Profile.Log("Waiting on external application to start WoW");
-						_lockOwner.Profile.Status = "Waiting on external application to start WoW";
-						return;
-					}
-
-				}
 
                 if (_wowProcess == null || _wowProcess.HasExitedSafe())
 				{

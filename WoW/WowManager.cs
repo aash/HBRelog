@@ -6,90 +6,25 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Windows;
-using GreyMagic;
+//using GreyMagic;
 using HighVoltz.HBRelog.FiniteStateMachine;
 using HighVoltz.HBRelog.FiniteStateMachine.FiniteStateMachine;
 using HighVoltz.HBRelog.Settings;
-using HighVoltz.HBRelog.WoW.FrameXml;
-using HighVoltz.HBRelog.WoW.Lua;
+//using HighVoltz.HBRelog.WoW.FrameXml;
+//using HighVoltz.HBRelog.WoW.Lua;
 using HighVoltz.HBRelog.WoW.States;
-using Region = HighVoltz.HBRelog.WoW.FrameXml.Region;
+//using Region = HighVoltz.HBRelog.WoW.FrameXml.Region;
 
 namespace HighVoltz.HBRelog.WoW
 {
 
-    public class WowLuaManager
-    {
-        internal const int LuaStateGlobalsOffset = 0x50;
-
-        public string ActiveCharacterName { get; set; }
-
-        public ExternalProcessReader Memory;
-
-        public IntPtr FocusedWidgetPtr
-        {
-            get { return Memory == null ? IntPtr.Zero : Memory.Read<IntPtr>((IntPtr)HbRelogManager.Settings.FocusedWidgetOffset, true); }
-        }
-
-        public UIObject FocusedWidget
-        {
-            get
-            {
-                IntPtr widgetAddress = FocusedWidgetPtr;
-                return widgetAddress != IntPtr.Zero ? UIObject.GetUIObjectFromPointer(this, widgetAddress) : null;
-            }
-        }
-
-        private LuaTable _globals;
-        public LuaTable Globals
-        {
-            get
-            {
-                if (Memory == null)
-                    return null;
-                var luaStatePtr = Memory.Read<IntPtr>((IntPtr)HbRelogManager.Settings.LuaStateOffset, true);
-                if (luaStatePtr == IntPtr.Zero)
-                {
-#if DEBUG
-                    Log.Write("Lua state is not initialized");
-#endif
-                    return null;
-                }
-
-                var globalsOffset = Memory.Read<IntPtr>(luaStatePtr + LuaStateGlobalsOffset);
-                if (globalsOffset == IntPtr.Zero)
-                {
-#if DEBUG
-                    Log.Write("Lua globals is not initialized");
-#endif
-                    return null;
-                }
-                if (_globals == null || _globals.Address != globalsOffset)
-                    _globals = new LuaTable(Memory, globalsOffset);
-
-                return _globals;
-            }
-            set { _globals = value; }
-        }
-    }
-
-    public sealed class WowManager : Engine, IGameManager
+    public sealed class WowManager
+        
+        // : Engine, IGameManager
     {
         public WowManager(CharacterProfile profile)
         {
             Profile = profile;
-            States = new List<State> 
-            {
-                new StartWowState(this),
-                new ScanOffsetsState(this),
-                new WowWindowPlacementState(this),
-                new LoginWowState(this),
-                new RealmSelectState(this),
-                new CharacterSelectState(this),
-                new CharacterCreationState(this),
-                new MonitorState(this),
-            };
-            LuaManager = new WowLuaManager();
         }
 
         #region Fields
@@ -97,10 +32,10 @@ namespace HighVoltz.HBRelog.WoW
         private readonly object _lockObject = new object();
         internal readonly Stopwatch LoginTimer = new Stopwatch();
 
-        public WowLuaManager LuaManager;
+        //public WowLuaManager LuaManager;
 
         private bool _isExiting;
-        private GlueState _lastGlueStatus = GlueState.None;
+        //private GlueState _lastGlueStatus = GlueState.None;
         private DateTime _throttleTimeStamp = DateTime.Now;
         internal bool ProcessIsReadyForInput;
         private CharacterProfile _profile;
@@ -116,23 +51,12 @@ namespace HighVoltz.HBRelog.WoW
         public WowSettings Settings { get; private set; }
 
 
+        public bool InGame { get; private set; }
         public Process GameProcess { get; internal set; }
 
         public Process ReusedGameProcess { get; internal set; }
 
         public WowLockToken LockToken { get; internal set; }
-
-        /// <summary>
-        ///     WoW is at the connecting or loading screen
-        /// </summary>
-        internal bool IsUsingLauncher
-        {
-            get
-            {
-                var fileName = Path.GetFileName(Settings.WowPath);
-                return fileName != null && !fileName.Equals("Wow.exe", StringComparison.CurrentCultureIgnoreCase);
-            }
-        }
 
         public bool ServerIsOnline
         {
@@ -151,56 +75,6 @@ namespace HighVoltz.HBRelog.WoW
             }
         }
 
-        public bool IsConnectiongOrLoading
-        {
-            get
-            {
-                try
-                {
-                    return LuaManager.Memory != null && LuaManager.Memory.Read<byte>(true, ((IntPtr)HbRelogManager.Settings.GameStateOffset + 1)) == 1;
-                }
-                catch
-                {
-                    return false;
-                }
-            }
-        }
-
-        public WowManager.GlueState GlueStatus
-        {
-            get { return LuaManager.Memory != null ? LuaManager.Memory.Read<WowManager.GlueState>(true, (IntPtr)HbRelogManager.Settings.GlueStateOffset) : WowManager.GlueState.Disconnected; }
-        }
-
-        public bool StalledLogin
-        {
-            get
-            {
-                if (LuaManager.Memory == null)
-                    return false;
-                if (ServerIsOnline && !ServerHasQueue)
-                {
-                    GlueState glueStatus = GlueStatus;
-                    // check if at server selection for tooo long.
-                    if (glueStatus == _lastGlueStatus)
-                    {
-                        if (!LoginTimer.IsRunning)
-                            LoginTimer.Start();
-
-                        // check once every 40 seconds
-                        if (LoginTimer.ElapsedMilliseconds > 40000)
-                        {
-                            _lastGlueStatus = GlueState.None;
-                            return true;
-                        }
-                    }
-                    else if (LoginTimer.IsRunning)
-                        LoginTimer.Reset();
-                    _lastGlueStatus = glueStatus;
-                }
-                return false;
-            }
-        }
-
         public bool IsReusedGameProcess
         {
             get { return Settings.ReuseFreeWowProcess && ReusedGameProcess != null; }
@@ -211,28 +85,6 @@ namespace HighVoltz.HBRelog.WoW
             get { return !IsReusedGameProcess; }
         }
 
-        public bool ServerHasQueue
-        {
-            get
-            {
-                try
-                {
-                    if (InGame)
-                        return false;
-                    var button = UIObject.GetUIObjectByName<Button>(LuaManager, "GlueDialogButton1");
-                    if (button != null && button.IsVisible)
-                    {
-                        var localizedChangeRealmText = LuaManager.Globals.GetValue("CHANGE_REALM");
-                        return localizedChangeRealmText != null && button.Text == localizedChangeRealmText.String.Value;
-                    }
-                    return false;
-                }
-                catch (Exception)
-                {
-                    return false;
-                }
-            }
-        }
 
         #endregion
 
@@ -256,27 +108,6 @@ namespace HighVoltz.HBRelog.WoW
         /// <summary>
         ///     Character is logged in game
         /// </summary>
-        public bool InGame
-        {
-            get
-            {
-                try
-                {
-                    if (LuaManager.Memory == null)
-                        return false;
-
-                    var state = LuaManager.Memory.Read<byte>(true, (IntPtr)HbRelogManager.Settings.GameStateOffset);
-                    var loadingScreenCount = LuaManager.Memory.Read<int>(
-		                true,
-		                (IntPtr) HbRelogManager.Settings.LoadingScreenEnableCountOffset);
-					return state == 1 && loadingScreenCount == 0;
-                }
-                catch
-                {
-                    return false;
-                }
-            }
-        }
 
         public bool StartupSequenceIsComplete { get; internal set; }
         public event EventHandler<ProfileEventArgs> OnStartupSequenceIsComplete;
@@ -304,10 +135,6 @@ namespace HighVoltz.HBRelog.WoW
                 {
                     CloseGameProcess();
                 }
-                if (LuaManager.Memory != null)
-                    LuaManager.Memory.Dispose();
-                LuaManager.Globals = null;
-                LuaManager.Memory = null;
                 GameProcess = null;
                 ProcessIsReadyForInput = false;
                 IsRunning = false;
@@ -323,12 +150,12 @@ namespace HighVoltz.HBRelog.WoW
                 Monitor.Exit(_lockObject);
         }
 
-        override public void Pulse()
+        public void Pulse()
         {
-            lock (_lockObject)
-            {
-                base.Pulse();
-            }
+            //lock (_lockObject)
+            //{
+            //    base.Pulse();
+            //}
         }
 
         #endregion
@@ -354,8 +181,8 @@ namespace HighVoltz.HBRelog.WoW
             catch (InvalidOperationException ex)
             {
                 Log.Err(ex.ToString());
-                if (LuaManager.Memory != null)
-                    CloseGameProcess(Process.GetProcessById(LuaManager.Memory.Process.Id));
+                //if (LuaManager.Memory != null)
+                //    CloseGameProcess(Process.GetProcessById(LuaManager.Memory.Process.Id));
             }
             //Profile.TaskManager.HonorbuddyManager.CloseBotProcess();
             GameProcess = null;
@@ -402,47 +229,8 @@ namespace HighVoltz.HBRelog.WoW
             }
         }
 
-        internal PointF ConvertWidgetCenterToWin32Coord(Region widget)
-        {
-            var ret = new PointF();
-            var gameFullScreenFrame = UIObject.GetUIObjectByName<Frame>(LuaManager, "GlueParent") ?? UIObject.GetUIObjectByName<Frame>(LuaManager, "UIParent");
-            if (gameFullScreenFrame == null)
-                return ret;
-            var gameFullScreenFrameRect = gameFullScreenFrame.Rect;
-            var widgetCenter = widget.Center;
-            var windowInfo = Utility.GetWindowInfo(GameProcess.MainWindowHandle);
-            var leftBorderWidth = windowInfo.rcClient.Left - windowInfo.rcWindow.Left;
-            var bottomBorderWidth = windowInfo.rcWindow.Bottom - windowInfo.rcClient.Bottom;
-            var winClientWidth = windowInfo.rcClient.Right - windowInfo.rcClient.Left;
-            var winClientHeight = windowInfo.rcClient.Bottom - windowInfo.rcClient.Top;
-            var xCo = winClientWidth / gameFullScreenFrameRect.Width;
-            var yCo = winClientHeight / gameFullScreenFrameRect.Height;
-
-            ret.X = widgetCenter.X * xCo + leftBorderWidth;
-            ret.Y = widgetCenter.Y * yCo + bottomBorderWidth;
-            // flip the Y coord around because in WoW's UI coord space the Y goes up where as in windows it goes down.
-            ret.Y = windowInfo.rcWindow.Bottom - windowInfo.rcWindow.Top - ret.Y;
-            return ret;
-        }
 
         #endregion
 
-        #region Embeded Types
-
-        // incomplete. missing Server Queue (if there is one).
-        public enum GlueState
-        {
-            None = -1,
-            Disconnected = 0,
-            Updater,
-            CharacterSelection = 2,
-            CharacterCreation = 3,
-            ServerSelection = 6,
-            Credits = 7,
-            RegionalSelection = 8
-        }
-
-
-        #endregion
     }
 }

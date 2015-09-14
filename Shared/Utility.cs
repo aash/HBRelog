@@ -447,8 +447,10 @@ namespace Shared
             var ms = pollDelayMilliseconds;
             while (!await predicate() && isNotTimeout)
             {
+                cancel.ThrowIfCancellationRequested();
+                await pause.WaitWhilePausedAsync();
                 isNotTimeout = t.ElapsedMilliseconds < timeout.TotalMilliseconds;
-                await Task.Delay(ms);
+                await Task.Delay(ms, cancel);
             }
             return isNotTimeout;
         }
@@ -470,8 +472,10 @@ namespace Shared
             var ms = pollDelayMilliseconds;
             while (!predicate() && isNotTimeout)
             {
+                cancel.ThrowIfCancellationRequested();
+                await pause.WaitWhilePausedAsync();
                 isNotTimeout = t.ElapsedMilliseconds < timeout.TotalMilliseconds;
-                await Task.Delay(ms);
+                await Task.Delay(ms, cancel);
             }
             return isNotTimeout;
         }

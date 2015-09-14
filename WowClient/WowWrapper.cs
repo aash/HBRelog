@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
@@ -11,6 +12,7 @@ using System.Threading.Tasks;
 using WowClient.Lua;
 using WowClient.Lua.UI;
 using Shared;
+using WinAuth;
 using Button = WowClient.Lua.UI.Button;
 
 namespace WowClient
@@ -22,27 +24,149 @@ namespace WowClient
         public WowWrapper()
         {}
 
-        public void AttachTo(Process process)
+        private async Task<IAbsoluteAddress> FindPatternAsync(string pattern, int timeoutMilliseconds = 60000, int pollDelayMilliseconds = 500)
+        {
+            IAbsoluteAddress address = null;
+            if (!await Utility.WaitUntilAsync(() =>
+            {
+                address = Memory.FindPattern(pattern);
+                return !address.Equals(null);
+            }, timeoutMilliseconds, pollDelayMilliseconds) || address == null)
+            {
+                Console.WriteLine("pattern find timeout");
+                return null;
+            }
+            return address;
+        }
+
+        public async Task<bool> AttachToProcessAsync(Process process)
+        {
+            return await AttachToProcessAsync(process, new CancellationToken(), new PauseToken());
+        }
+
+        public async Task<bool> AttachToProcessAsync(Process process, CancellationToken cancelToken, PauseToken pauseToken)
         {
             // TODO check process is valid
             try
             {
                 WowProcess = process;
                 Memory = new ReadOnlyMemory(process);
-                GameStateAddress = Memory.FindPattern(WowPatterns.GameStatePattern).Deref(2);
-                LuaStateAddress = Memory.FindPattern(WowPatterns.LuaStatePattern)
-                    .Deref(2)
-                    .Deref();
+
+                IAbsoluteAddress address;
+                if ((address = await FindPatternAsync(WowPatterns.LuaStatePattern)) == null)
+                {
+                    Console.WriteLine("memory state initialize timeout");
+                    return false;
+                }
+                LuaStateAddress = address.Deref(2).Deref();
+
+                if ((address = await FindPatternAsync(WowPatterns.GameStatePattern)) == null)
+                {
+                    Console.WriteLine("memory state initialize timeout");
+                    return false;
+                }
+                GameStateAddress = address.Deref(2);
+
                 // it is actually a reference to where address to focused widget is located
                 // so to get address of focused widget we should deref this reference
-                FocusedWidgetAddressRef = Memory.FindPattern(WowPatterns.FocusedWidgetPattern).Deref(2);
-                LoadingScreenEnableCountAddress = Memory.FindPattern(WowPatterns.LoadingScreenEnableCountPattern).Deref(2);
-                GlueStateAddress = Memory.FindPattern(WowPatterns.GlueStatePattern).Deref(2);
+                if ((address = await FindPatternAsync(WowPatterns.FocusedWidgetPattern)) == null)
+                {
+                    Console.WriteLine("memory state initialize timeout");
+                    return false;
+                }
+                FocusedWidgetAddressRef = address.Deref(2);
+
+                if ((address = await FindPatternAsync(WowPatterns.LoadingScreenEnableCountPattern)) == null)
+                {
+                    Console.WriteLine("memory state initialize timeout");
+                    return false;
+                }
+                LoadingScreenEnableCountAddress = address.Deref(2);
+
+                if ((address = await FindPatternAsync(WowPatterns.GlueStatePattern)) == null)
+                {
+                    Console.WriteLine("memory state initialize timeout");
+                    return false;
+                }
+                GlueStateAddress = address.Deref(2);
+
+                switch (CurrentGlueState)
+                {
+                    case GlueState.Disconnected:
+                        if (!await WaitGlobalsInitAsync())
+                        {
+                            Console.WriteLine("globals init timout");
+                            return false;
+                        }
+                        if (!await Utility.WaitUntilAsync(async () =>
+                        {
+                            var w = await GetWidgetAsync<EditBox>("AccountLoginAccountEdit");
+                            if (w != null)
+                                return w.IsVisible && w.IsShown;
+                            return false;
+                        }, 60000, 500))
+                        {
+                            Console.WriteLine("login screen init timeout");
+                            return false;
+                        }
+                        break;
+                    case GlueState.Updater:
+                        return false;
+                }
             }
             catch (Exception e)
             {
-                throw new Exception("Could not attach WowWrapper.", e);
+                throw new Exception("could not attach WowWrapper", e);
             }
+            return true;
+        }
+
+        private long WalkGlobals()
+        {
+            long cnt = 0;
+            try
+            {
+                if (Globals == null)
+                    return 0;
+                foreach (var node in Globals.Nodes)
+                {
+                    var n = node;
+                    while (n != null)
+                    {
+                        if (n.Value.Type == LuaType.String || n.Value.Type == LuaType.Table)
+                            cnt += 1;
+                        n = n.Next;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                ResetGlobals();
+                Console.WriteLine(e);
+                return 0;
+            }
+            return cnt;
+        }
+        
+        private async Task<bool> WaitGlobalsInitAsync()
+        {
+            long old_cnt = 0;
+            if (!await Utility.WaitUntilAsync(() =>
+            {
+                ResetGlobals();
+                long cnt = WalkGlobals();
+                if (cnt == 0)
+                    return false;
+                if (old_cnt == cnt)
+                    return true;
+                old_cnt = cnt;
+                return false;
+            }, 60000, 500))
+            {
+                Console.WriteLine("globals init timeout");
+                return false;
+            }
+            return true;
         }
 
         public WowWrapper(WowWrapper wrapper)
@@ -292,8 +416,10 @@ namespace WowClient
 
             if (!string.IsNullOrEmpty(editBox.Text))
             {
-                Utility.SendBackgroundKey(WowProcess.MainWindowHandle, (char)Keys.End, false);
-                Utility.SendBackgroundString(WowProcess.MainWindowHandle, new string('\b', editBox.Text.Length * 2), false);
+                SendKeyCombination(Keys.A, Keys.ControlKey);
+                SendKey(Keys.Delete);
+                //Utility.SendBackgroundKey(WowProcess.MainWindowHandle, (char)Keys.End, false);
+                //Utility.SendBackgroundString(WowProcess.MainWindowHandle, new string('\b', editBox.Text.Length * 2), false);
             }
 
             if (!await Utility.WaitUntilAsync(() => string.IsNullOrEmpty(editBox.Text), TimeSpan.FromMilliseconds(500)))
@@ -363,6 +489,8 @@ namespace WowClient
         {
             if (IsInGame)
                 return false;
+            if (IsConnectingOrLoading)
+                return false;
             var t = await GetWidgetAsync<FontString>("GlueDialogText");
             if (t == null)
                 return CurrentGlueState == GlueState.Disconnected;
@@ -378,6 +506,7 @@ namespace WowClient
         public async Task<bool> WaitGlueParentInitAsync()
         {
             // wait GlueParent is not null
+            await Utility.WaitUntilAsync(() => !IsConnectingOrLoading, 60000, 500);
             await Utility.WaitUntilAsync(async () => await GetWidgetAsync<Frame>("GlueParent") != null, 1000, 100);
             var glueParent = await GetWidgetAsync<Frame>("GlueParent");
             if (glueParent == null)
@@ -423,6 +552,12 @@ namespace WowClient
             {
                 Utility.SendBackgroundKey(WowProcess.MainWindowHandle, (char)key, false);
             }
+        }
+
+        public void SendKeyCombination(Keys key, params Keys[] modifiers)
+        {
+            Utility.SendBackgroundKeyCombination(WowProcess.MainWindowHandle, (char)key,
+                modifiers.Select(k => (char)k).ToArray());
         }
 
         public async Task<bool> ClickAtAsync(PointF position, bool restore = true)
@@ -682,12 +817,24 @@ namespace WowClient
                     Console.WriteLine("can't enter credentials");
                     return false;
                 }
-                // transition to next screen
                 SendKey(Keys.Enter);
-                if (!await Utility.WaitUntilAsync(async () => !(await IsGlueDialogVisibleAsync()), TimeSpan.FromSeconds(30), 100))
+                
+                // handle auth token frame
+                if (!await HandleAuthTokenAsync(settings))
+                {
+                    Console.WriteLine("failed to handle auth token");
+                    return false;
+                }
+
+                if (!await Utility.WaitUntilAsync(async () => !(await IsGlueDialogVisibleAsync()), TimeSpan.FromMinutes(1), 100))
                 {
                     // TODO revisit message
                     Console.WriteLine("connection timed out");
+                    return false;
+                }
+                if (await GetLoginResultAsync() != LoginResult.Success)
+                {
+                    Console.WriteLine("unsuccessful login");
                     return false;
                 }
             }
@@ -773,6 +920,97 @@ namespace WowClient
             return IsInGame;
         }
 
+        public async Task<string> GetGlueDialogTitleAsync()
+        {
+            var widget = await GetWidgetAsync<FontString>("GlueDialogTitle");
+            if (widget != null && widget.IsVisible)
+                return widget.Text;
+            return null;
+        }
+
+        public async Task<LoginResult> GetLoginResultAsync()
+        {
+            try
+            {
+                var titleString = await GetGlueDialogTitleAsync();
+                if (titleString == null)
+                    return LoginResult.Success;
+                // get the error code from the dialog title
+                int code;
+                int.TryParse(Regex.Match(titleString, "\\d+").Value, out code);
+                switch (code)
+                {
+                    case 202:
+                        return LoginResult.Banned;
+                    case 203:
+                        return LoginResult.Suspended;
+                    case 206:
+                        return LoginResult.Frozen;
+                    case 104:
+                        return LoginResult.IncorrectPassword;
+                    case 204:
+                        return LoginResult.LockedLicense;
+                    case 141:
+                    case 42003:
+                        return LoginResult.SuspiciousLocked;
+                }
+            }
+            catch (Exception)
+            {
+                return LoginResult.Unknown;
+            }
+            return LoginResult.Unknown;
+        }
+
+        public enum LoginResult
+        {
+            Success,
+            IncorrectPassword,
+            Banned,
+            Suspended,
+            Frozen,
+            SuspiciousLocked,
+            LockedLicense,
+            Unknown,
+        }
+
+        public async Task<bool> HandleAuthTokenAsync(WowSettings settings)
+        {
+            var serial = settings.AuthenticatorSerial;
+            var code = settings.AuthenticatorRestoreCode;
+            if (string.IsNullOrEmpty(serial) && string.IsNullOrEmpty(code))
+                return true;
+
+            var frame = await GetWidgetAsync<Frame>("TokenEnterDialogBackgroundEdit");
+
+            if (!await Utility.WaitUntilAsync(() => frame.IsVisible && frame.IsShown, 30000, 100))
+            {
+                Console.WriteLine("auth token frame did not showed up");
+                return false;
+            }
+
+            if (frame == null || !frame.IsVisible || !frame.IsShown)
+                return true;
+
+
+            var auth = new BattleNetAuthenticator();
+            try
+            {
+                auth.Restore(serial, code);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("could not get auth token: {0}", ex);
+                return false;
+            }
+
+            if (!await TypeIntoEditBoxAsync("TokenEnterDialogBackgroundEdit", auth.CurrentCode))
+                return false;
+            SendKey(Keys.Enter);
+            return true;
+            
+        }
+
         public async Task<bool> CloseActiveFramesAsync()
         {
             await Task.Delay(100);
@@ -816,7 +1054,7 @@ namespace WowClient
 
         public async Task<int> MonitorAsync()
         {
-            
+            return 0;
         }
 
         public string CurrentCharacterRealmCached { get; private set; }

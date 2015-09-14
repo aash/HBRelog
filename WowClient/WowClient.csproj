@@ -103,6 +103,7 @@
     <Compile Include="Lua\LuaValue.cs" />
     <Compile Include="Memory.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="WowProcessPool.cs" />
     <Compile Include="WowSettings.cs" />
     <Compile Include="WowWrapper.cs" />
   </ItemGroup>
@@ -110,6 +111,10 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Libs\Authenticator\Authenticator.csproj">
+      <Project>{EAF2D5CE-D817-453A-8A32-3D531570AE04}</Project>
+      <Name>Authenticator</Name>
+    </ProjectReference>
     <ProjectReference Include="..\Shared\Shared.csproj">
       <Project>{e175600b-3279-425b-9b6c-94b4613c71a8}</Project>
       <Name>Shared</Name>

@@ -430,7 +430,14 @@ namespace Shared
             return !timeOut;
         }
 
+
         public static async Task<bool> WaitUntilAsync(Func<Task<bool>> predicate, TimeSpan timeout, int pollDelayMilliseconds = 10)
+        {
+            return await
+                WaitUntilAsync(predicate, new CancellationToken(), new PauseToken(), timeout, pollDelayMilliseconds);
+        }
+
+        public static async Task<bool> WaitUntilAsync(Func<Task<bool>> predicate, CancellationToken cancel, PauseToken pause, TimeSpan timeout, int pollDelayMilliseconds = 10)
         {
             // TODO implement adaptive waiting
             // so predicate does not being polled too often
@@ -446,7 +453,14 @@ namespace Shared
             return isNotTimeout;
         }
 
-        public static async Task<bool> WaitUntilAsync(Func<bool> predicate, TimeSpan timeout, int pollDelayMilliseconds = 10)
+        public static async Task<bool> WaitUntilAsync(Func<bool> predicate, TimeSpan timeout,
+            int pollDelayMilliseconds = 10)
+        {
+            return await
+                WaitUntilAsync(predicate, new CancellationToken(), new PauseToken(), timeout, pollDelayMilliseconds);
+        }
+
+        public static async Task<bool> WaitUntilAsync(Func<bool> predicate, CancellationToken cancel, PauseToken pause, TimeSpan timeout, int pollDelayMilliseconds = 10)
         {
             // TODO implement adaptive waiting
             // so predicate does not being polled too often
@@ -461,16 +475,28 @@ namespace Shared
             }
             return isNotTimeout;
         }
+
+        public static async Task<bool> WaitUntilAsync(Func<bool> predicate, CancellationToken cancel, PauseToken pause, int timeoutMilliseconds = 1000, int pollDelayMilliseconds = 10)
+        {
+            return await
+                WaitUntilAsync(predicate, cancel, pause, TimeSpan.FromMilliseconds(timeoutMilliseconds), pollDelayMilliseconds);
+        }
         public static async Task<bool> WaitUntilAsync(Func<bool> predicate, int timeoutMilliseconds = 1000, int pollDelayMilliseconds = 10)
         {
-            return
-                await WaitUntilAsync(predicate, TimeSpan.FromMilliseconds(timeoutMilliseconds), pollDelayMilliseconds);
+            return await
+                WaitUntilAsync(predicate, TimeSpan.FromMilliseconds(timeoutMilliseconds), pollDelayMilliseconds);
         }
 
         public static async Task<bool> WaitUntilAsync(Func<Task<bool>> predicate, int timeoutMilliseconds = 1000, int pollDelayMilliseconds = 10)
         {
-            return
-                await WaitUntilAsync(predicate, TimeSpan.FromMilliseconds(timeoutMilliseconds), pollDelayMilliseconds);
+            return await
+                WaitUntilAsync(predicate, TimeSpan.FromMilliseconds(timeoutMilliseconds), pollDelayMilliseconds);
+        }
+
+        public static async Task<bool> WaitUntilAsync(Func<Task<bool>> predicate, CancellationToken cancel, PauseToken pause, int timeoutMilliseconds = 1000, int pollDelayMilliseconds = 10)
+        {
+            return await
+                WaitUntilAsync(predicate, cancel, pause, TimeSpan.FromMilliseconds(timeoutMilliseconds), pollDelayMilliseconds);
         }
 
         private static IntPtr _originalForegroundWindow;
@@ -504,5 +530,13 @@ namespace Shared
         }
 
         #endregion
+    }
+
+    public static class Extensions
+    {
+        //public static string Join(this string separator, params string[] args)
+        //{
+        //    return args.Aggregate("", (a, b) => a != "" ? a + separator + b : b);
+        //}
     }
 }

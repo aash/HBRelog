@@ -18,16 +18,4 @@ namespace WowClient
         IScreen Current { get; }
     }
 
-    public interface ILoginScreen : IScreen
-    {
-        bool IsValid { get; }
-        bool IsBanned { get; }
-        bool IsSuspended { get; }
-        bool IsFrozen { get; }
-        bool IsSuspiciousLocked { get; }
-        bool IsLockedLicense { get; }
-        string Login { get; set; }
-        string Password { get; set; }
-        IScreen DoLogin();
-    }
 }

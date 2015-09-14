@@ -78,7 +78,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Interfaces.cs" />
-    <Compile Include="LoginScreen.cs" />
     <Compile Include="Lua\UI\Button.cs" />
     <Compile Include="Lua\UI\EditBox.cs" />
     <Compile Include="Lua\UI\Font.cs" />

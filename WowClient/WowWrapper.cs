@@ -93,18 +93,19 @@ namespace WowClient
                 switch (CurrentGlueState)
                 {
                     case GlueState.Disconnected:
-                        if (!await WaitGlobalsInitAsync())
+                        if (!await WaitGlobalsInitAsync(cancelToken, pauseToken))
                         {
                             Console.WriteLine("globals init timout");
                             return false;
                         }
                         if (!await Utility.WaitUntilAsync(async () =>
                         {
+                            ResetGlobals();
                             var w = await GetWidgetAsync<EditBox>("AccountLoginAccountEdit");
                             if (w != null)
                                 return w.IsVisible && w.IsShown;
                             return false;
-                        }, 60000, 500))
+                        }, cancelToken, pauseToken, 60000, 500))
                         {
                             Console.WriteLine("login screen init timeout");
                             return false;
@@ -148,7 +149,7 @@ namespace WowClient
             return cnt;
         }
         
-        private async Task<bool> WaitGlobalsInitAsync()
+        private async Task<bool> WaitGlobalsInitAsync(CancellationToken cancel, PauseToken pause)
         {
             long old_cnt = 0;
             if (!await Utility.WaitUntilAsync(() =>
@@ -161,31 +162,12 @@ namespace WowClient
                     return true;
                 old_cnt = cnt;
                 return false;
-            }, 60000, 500))
+            }, cancel, pause, 60000, 500))
             {
                 Console.WriteLine("globals init timeout");
                 return false;
             }
             return true;
-        }
-
-        public WowWrapper(WowWrapper wrapper)
-        {
-            try
-            {
-                WowProcess = wrapper.WowProcess;
-                Memory = wrapper.Memory;
-                GameStateAddress = wrapper.GameStateAddress;
-                LuaStateAddress = wrapper.LuaStateAddress;
-                FocusedWidgetAddressRef = wrapper.FocusedWidgetAddressRef;
-                LoadingScreenEnableCountAddress = wrapper.LoadingScreenEnableCountAddress;
-                GlueStateAddress = wrapper.GlueStateAddress;
-            }
-            catch (Exception e)
-            {
-                Trace.WriteLine(e);
-                throw new Exception("Could not initialize WowWrapper.");
-            }
         }
 
         public Process WowProcess { get; private set; }
@@ -265,7 +247,8 @@ namespace WowClient
 
         public void Dispose()
         {
-            Memory.Dispose();
+            if (Memory != null)
+                Memory.Dispose();
         }
 
         public UIObject GetWidget(IAbsoluteAddress address)
@@ -487,15 +470,34 @@ namespace WowClient
 
         public async Task<bool> IsLoginScreenAsync()
         {
-            if (IsInGame)
+            return await IsLoginScreenAsync(CancellationToken.None, new PauseToken());
+        }
+
+        public async Task<bool> IsLoginScreenAsync(CancellationToken cancel, PauseToken pause)
+        {
+            if (CurrentGlueState != GlueState.Disconnected
+                || IsInGame
+                || IsConnectingOrLoading)
                 return false;
-            if (IsConnectingOrLoading)
+
+            if (!await WaitGlobalsInitAsync(cancel, pause))
+            {
+                Console.WriteLine("globals init timout");
                 return false;
-            var t = await GetWidgetAsync<FontString>("GlueDialogText");
-            if (t == null)
-                return CurrentGlueState == GlueState.Disconnected;
-            return CurrentGlueState == GlueState.Disconnected
-                && (t.Equals(null) || !t.IsVisible);
+            }
+            if (!await Utility.WaitUntilAsync(async () =>
+            {
+                ResetGlobals();
+                var w = await GetWidgetAsync<EditBox>("AccountLoginAccountEdit");
+                if (w != null)
+                    return w.IsVisible && w.IsShown;
+                return false;
+            }, cancel, pause, 60000, 500))
+            {
+                Console.WriteLine("login screen init timeout");
+                return false;
+            }
+            return true;
         }
 
         private static int CountFrameDescendants(Frame obj)
@@ -638,7 +640,7 @@ namespace WowClient
             return true;
         }
 
-        public async Task<bool> LogoutAsync()
+        public async Task<bool> LogoutAsync(WowCredential credential, CancellationToken cancel, PauseToken pause)
         {
             if (!IsInGame)
                 return false;
@@ -649,16 +651,45 @@ namespace WowClient
                 return false;
             }
 
-            await Task.Delay(3000);
-
-            ResetGlobals();
-
             // transition to character select screen
-            if (!await Utility.WaitUntilAsync(async () => await IsCharacterSelectionScreenAsync(),
-                TimeSpan.FromSeconds(30), 100))
+            if (!await Utility.WaitUntilAsync(async () =>
+            {
+                ResetGlobals();
+                return await IsCharacterSelectionScreenAsync();
+            }, TimeSpan.FromSeconds(30), 100))
             {
                 Console.WriteLine("unexpected screen, it should be character select screen");
                 return false;
+            }
+
+            // TODO dirty hack, sometimes it accidentially hit esc when glue dialogue still active
+            // so realm selection screen pops up, insted we should wait until it disappears
+            await Task.Delay(2000, cancel);
+            if (!await Utility.WaitUntilAsync(async () => !(await IsGlueDialogVisibleAsync()), cancel, pause, TimeSpan.FromMinutes(1), 100))
+            {
+                // TODO revisit message
+                if (!cancel.IsCancellationRequested)
+                    Console.WriteLine("connection timed out");
+                return false;
+            }
+
+            var realm = await CurrentCharacterRealmAsync();
+            var activeCharNames = (await GetWidgetsAsync<FontString>())
+                .Where(w => w.IsVisible
+                    && Regex.IsMatch(w.Name, "^CharSelectCharacterButton\\d+ButtonTextName")
+                    // character name contains only word characters,
+                    // colored text (like "text |...|r") means that character is inactive
+                    && Regex.IsMatch(w.Text, "^\\w+$"))
+                .Select(w => w.Text.Split(' ')[0]).ToList();
+
+            if (!activeCharNames.Contains(credential.CharacterName) || realm != credential.Realm)
+            {
+                SendKey(Keys.Escape);
+                if (!await Utility.WaitUntilAsync(async () => await IsLoginScreenAsync(), 60000, 500))
+                {
+                    Console.WriteLine("can not reach login screen");
+                    return false;
+                }
             }
 
             await WaitGlueParentInitAsync();
@@ -705,7 +736,12 @@ namespace WowClient
         {
             if (IsInGame)
             {
-                return Globals.GetValue("realm").String.Value;
+                if (Globals == null)
+                    return null;
+                var v = Globals.GetValue("realm");
+                if (v == null || v.Type != LuaType.String || string.IsNullOrEmpty(v.String.Value))
+                    return null;
+                return v.String.Value;
             }
             if (await IsCharacterSelectionScreenAsync())
             {
@@ -780,84 +816,130 @@ namespace WowClient
             return true;
         }
 
+        public async Task<WowCredential> GetIntoTheGameAsync(WowCredential credential)
+        {
+            return await GetIntoTheGameAsync(credential, new CancellationToken(), new PauseToken());
+        }
+        
         /// <summary>
         /// 
         /// </summary>
-        /// <param name="settings"></param>
+        /// <param name="credential"></param>
         /// <returns></returns>
-        public async Task<bool> GetIntoTheGameAsync(WowSettings settings)
+        public async Task<WowCredential> GetIntoTheGameAsync(WowCredential credential, CancellationToken cancel, PauseToken pause)
         {
-            if (settings == null)
-                throw new ArgumentException("settings == null");
-            if (!settings.IsValid())
-                throw new ArgumentException("settings.IsValid() == false");
+            if (credential == null)
+                throw new ArgumentException("credential == null");
+            if (!credential.IsValid())
+                throw new ArgumentException("credential.IsValid() == false");
             if (IsInGame)
             {
                 var charName = await CurrentCharacterNameAsync();
+                var realm = await CurrentCharacterRealmAsync();
                 if (charName == null)
                 {
                     Console.WriteLine("could not get character name ingame");
-                    return false;
+                    return null;
                 }
-                if (charName != settings.CharacterName)
+                if (charName != credential.CharacterName || realm != credential.Realm)
                 {
-                    if (!await LogoutAsync())
+                    if (!await LogoutAsync(credential, cancel, pause))
                     {
-                        Console.WriteLine("could not logout, to switch characters: {0} to {1}", charName, settings.CharacterName);
-                        return false;
+                        Console.WriteLine("could not logout, to switch characters: {0} to {1}", charName, credential.CharacterName);
+                        return null;
                     }
                 }
             }
             if (await IsLoginScreenAsync())
             {
+                if (cancel.IsCancellationRequested)
+                {
+                    return null;
+                }
+
+                var retry = 0;
+                while ((await IsGlueDialogVisibleAsync() || await GetLoginResultAsync() != LoginResult.NoResult) && retry < 5)
+                {
+                    retry++;
+                    SendKey(Keys.Escape);
+                    await Task.Delay(500, cancel);
+                }
+                if (await IsGlueDialogVisibleAsync())
+                {
+                    Console.WriteLine("unhandled dialog prevents login");
+                    return null;
+                }
+
+                await pause.WaitWhilePausedAsync();
                 // TODO factor out string constants
-                if (!await TypeIntoEditBoxAsync("AccountLoginAccountEdit", settings.Login)
-                    || !await TypeIntoEditBoxAsync("AccountLoginPasswordEdit", settings.Password))
+                if (!await TypeIntoEditBoxAsync("AccountLoginAccountEdit", credential.Login)
+                    || !await TypeIntoEditBoxAsync("AccountLoginPasswordEdit", credential.Password))
                 {
                     Console.WriteLine("can't enter credentials");
-                    return false;
+                    return null;
                 }
                 SendKey(Keys.Enter);
                 
                 // handle auth token frame
-                if (!await HandleAuthTokenAsync(settings))
+                if (!await HandleAuthTokenAsync(credential))
                 {
                     Console.WriteLine("failed to handle auth token");
-                    return false;
+                    return null;
                 }
 
-                if (!await Utility.WaitUntilAsync(async () => !(await IsGlueDialogVisibleAsync()), TimeSpan.FromMinutes(1), 100))
+                if (!await Utility.WaitUntilAsync(async () => !(await IsGlueDialogVisibleAsync()), cancel, pause, TimeSpan.FromMinutes(1), 100))
                 {
                     // TODO revisit message
-                    Console.WriteLine("connection timed out");
-                    return false;
+                    if (!cancel.IsCancellationRequested)
+                        Console.WriteLine("connection timed out");
+                    return null;
                 }
-                if (await GetLoginResultAsync() != LoginResult.Success)
+                if (await GetLoginResultAsync() != LoginResult.NoResult)
                 {
                     Console.WriteLine("unsuccessful login");
-                    return false;
+                    return null;
                 }
             }
             if (await IsCharacterCreationScreenAsync())
             {
+                if (cancel.IsCancellationRequested)
+                {
+                    return null;
+                }
+                await pause.WaitWhilePausedAsync();
                 SendKey(Keys.Escape);
-                if (!await Utility.WaitUntilAsync(async () => !(await IsGlueDialogVisibleAsync()), TimeSpan.FromSeconds(30), 100))
+                if (!await Utility.WaitUntilAsync(async () => !(await IsGlueDialogVisibleAsync()), cancel, pause, TimeSpan.FromSeconds(30), 100))
                 {
                     // TODO revisit message
-                    Console.WriteLine("connection timed out");
-                    return false;
+                    if (!cancel.IsCancellationRequested)
+                        Console.WriteLine("connection timed out");
+                    return null;
                 }
             }
             if (await IsCharacterSelectionScreenAsync())
             {
+                if (cancel.IsCancellationRequested)
+                {
+                    return null;
+                }
+                await pause.WaitWhilePausedAsync();
                 var currRealmName = await CurrentCharacterRealmAsync();
 
-                if (currRealmName != settings.Realm)
+                var spottedCharNames = (await GetWidgetsAsync<FontString>())
+                    .Where(w => w.IsVisible
+                        && Regex.IsMatch(w.Name, "^CharSelectCharacterButton\\d+ButtonTextName")
+                        // character name contains only word characters,
+                        // colored text (like "text |...|r") means that character is inactive
+                        && Regex.IsMatch(w.Text, "^\\w+$"))
+                    .Select(w => string.Format("{0}-{1}", w.Text.Split(' ')[0], currRealmName)).ToList();
+                credential.Characters.UnionWith(spottedCharNames);
+
+                if (currRealmName != credential.Realm)
                 {
-                    if (!await SelectRealmAsync(settings.Realm))
+                    if (!await SelectRealmAsync(credential.Realm))
                     {
                         Console.WriteLine("could not select realm");
-                        return false;
+                        return null;
                     }
                 }
 
@@ -868,30 +950,41 @@ namespace WowClient
                         // colored text (like "text |...|r") means that character is inactive
                         && Regex.IsMatch(w.Text, "^\\w+$"))
                     .Select(w => w.Text.Split(' ')[0]).ToList();
-                settings.AccountCharacterNames = activeCharNames;
+                credential.Characters.UnionWith(activeCharNames.Select(s => string.Format("{0}-{1}", s, credential.Realm)));
                 // TODO emit event account character names list was updated
 
-                if (!activeCharNames.Contains(settings.CharacterName))
+                if (!activeCharNames.Contains(credential.CharacterName))
                 {
-                    Console.WriteLine("there's no character with specified name ({0}) or it is inactive", settings.CharacterName);
+                    Console.WriteLine("there's no character with specified name ({0}) or it is inactive", credential.CharacterName);
                     activeCharNames.ForEach(n => Console.WriteLine("\'{0}\'", n));
-                    return false;
+                    return null;
                 }
 
                 var selectedChar = await GetWidgetAsync<FontString>("CharSelectCharacterName");
-                while (selectedChar.Text != settings.CharacterName)
+                while (selectedChar.Text != credential.CharacterName)
                 {
+                    if (cancel.IsCancellationRequested)
+                    {
+                        return null;
+                    }
+                    await pause.WaitWhilePausedAsync();
                     var str = selectedChar.Text;
-                    Utility.SendBackgroundKey(WowProcess.MainWindowHandle, (char)Keys.Down, false);
-                    await Utility.WaitUntilAsync(() => str != selectedChar.Text, 500, 100);
+                    SendKey(Keys.Down);
+                    if (!await Utility.WaitUntilAsync(() => str != selectedChar.Text, cancel, pause, 500, 100))
+                    {
+                        if (!cancel.IsCancellationRequested)
+                            Console.WriteLine("can't move character selection cursor");
+                        return null;
+                    }
                 }
 
                 // transition into the game screen
-                Utility.SendBackgroundKey(WowProcess.MainWindowHandle, (char)Keys.Enter, false);
-                if (!await Utility.WaitUntilAsync(() => IsInGame, TimeSpan.FromMinutes(2), 100))
+                SendKey(Keys.Enter);
+                if (!await Utility.WaitUntilAsync(() => IsInGame, cancel, pause, TimeSpan.FromMinutes(2), 100))
                 {
-                    Console.WriteLine("get into the game timed out");
-                    return false;
+                    if (!cancel.IsCancellationRequested)
+                        Console.WriteLine("get into the game timed out");
+                    return null;
                 }
 
                 if (!await Utility.WaitUntilAsync(
@@ -899,25 +992,34 @@ namespace WowClient
                     {
                         ResetGlobals();
                         return !string.IsNullOrEmpty(await CurrentCharacterNameAsync());
-                    }, TimeSpan.FromMinutes(1), 300))
+                    }, cancel, pause, TimeSpan.FromMinutes(1), 300))
                 {
-                    Console.WriteLine("character name is not visible ingame");
-                    return false;
+                    if (!cancel.IsCancellationRequested)
+                        Console.WriteLine("character name is not visible ingame");
+                    return null;
                 }
             }
 
             if (IsInGame)
             {
+                if (cancel.IsCancellationRequested)
+                {
+                    return null;
+                }
+                await pause.WaitWhilePausedAsync();
                 // init realm variable for future use
                 CurrentCharacterRealmCached = await GetLuaResultAsync("GetRealmName()", "realm");
                 if (CurrentCharacterRealmCached == null)
                 {
-                    return false;
+                    return null;
                 }
             }
-
-            await Task.Delay(1000);
-            return IsInGame;
+            else
+            {
+                return null;
+            }
+            await Task.Delay(1000, cancel);
+            return credential;
         }
 
         public async Task<string> GetGlueDialogTitleAsync()
@@ -934,12 +1036,14 @@ namespace WowClient
             {
                 var titleString = await GetGlueDialogTitleAsync();
                 if (titleString == null)
-                    return LoginResult.Success;
+                    return LoginResult.NoResult;
                 // get the error code from the dialog title
                 int code;
                 int.TryParse(Regex.Match(titleString, "\\d+").Value, out code);
                 switch (code)
                 {
+                    case 2:
+                        return LoginResult.ConnectionFail;
                     case 202:
                         return LoginResult.Banned;
                     case 203:
@@ -964,7 +1068,7 @@ namespace WowClient
 
         public enum LoginResult
         {
-            Success,
+            ConnectionFail,
             IncorrectPassword,
             Banned,
             Suspended,
@@ -972,12 +1076,13 @@ namespace WowClient
             SuspiciousLocked,
             LockedLicense,
             Unknown,
+            NoResult
         }
 
-        public async Task<bool> HandleAuthTokenAsync(WowSettings settings)
+        public async Task<bool> HandleAuthTokenAsync(WowCredential credential)
         {
-            var serial = settings.AuthenticatorSerial;
-            var code = settings.AuthenticatorRestoreCode;
+            var serial = credential.AuthenticatorSerial;
+            var code = credential.AuthenticatorRestoreCode;
             if (string.IsNullOrEmpty(serial) && string.IsNullOrEmpty(code))
                 return true;
 
@@ -1050,11 +1155,6 @@ namespace WowClient
                 return false;
             }
             return true;
-        }
-
-        public async Task<int> MonitorAsync()
-        {
-            return 0;
         }
 
         public string CurrentCharacterRealmCached { get; private set; }

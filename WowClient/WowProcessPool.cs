@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Shared;
+using WowClient.Lua;
 
 namespace WowClient
 {
@@ -14,11 +15,11 @@ namespace WowClient
     {
 
         private readonly string _wowExePath;
-        private readonly string[] _wowExeArgs;
+        private readonly string _wowExeArgs;
         private readonly List<Process> _processes;
         private readonly List<Process> _freeProcessPool;
 
-        public WowProcessPool(string wowExePath, params string[] wowExeArgs)
+        public WowProcessPool(string wowExePath, string wowExeArgs)
         {
             _wowExePath = wowExePath;
             _wowExeArgs = wowExeArgs;
@@ -26,25 +27,82 @@ namespace WowClient
             _freeProcessPool = new List<Process>();
         }
 
+        public async Task<bool> InitializeAsync()
+        {
+            foreach (var proc in Process.GetProcessesByName("wow"))
+            {
+                var wrapper = new WowWrapper();
+                if (!await wrapper.AttachToProcessAsync(proc))
+                    continue;
+                _freeProcessPool.Add(proc);
+                wrapper.Dispose();
+            }
+            return true;
+        }
+
         private async Task<Process> StartNewAsync()
         {
-            var proc = Process.Start(_wowExePath, string.Join(" ", _wowExeArgs));
+            return await StartNewAsync(new CancellationToken(), new PauseToken());
+        }
+
+        private async Task<Process> StartNewAsync(CancellationToken cancel, PauseToken pause)
+        {
+            var proc = Process.Start(_wowExePath, _wowExeArgs);
             if (proc == null)
                 return null;
-            if (!await Utility.WaitUntilAsync(() => proc.MainWindowHandle != IntPtr.Zero, TimeSpan.FromMinutes(2), 100))
+            if (!await Utility.WaitUntilAsync(() => proc.MainWindowHandle != IntPtr.Zero, cancel, pause, TimeSpan.FromMinutes(2), 100))
             {
-                Console.WriteLine("wow process start timeout");
+                if (!cancel.IsCancellationRequested)
+                    Console.WriteLine("wow process start timeout");
                 return null;
             }
-            await Task.Delay(1000);
             return proc;
         }
 
         public async Task<Process> AllocateAsync()
         {
+            return await AllocateAsync(new CancellationToken(), new PauseToken());
+        }
+
+        public async Task<Process> AllocateAsync(string characterName, string realm)
+        {
+            return await AllocateAsync(CancellationToken.None, new PauseToken(), characterName, realm);
+        }
+
+        public async Task<Process> AllocateAsync(CancellationToken cancel, PauseToken pause, string characterName, string realm)
+        {
+            if (_freeProcessPool.Any())
+            {
+                foreach (var p in _freeProcessPool)
+                {
+                    var wrapper = new WowWrapper();
+                    if (!await wrapper.AttachToProcessAsync(p, cancel, pause))
+                    {
+                        wrapper.Dispose();
+                        continue;
+                    }
+                    var characterName1 = await wrapper.CurrentCharacterNameAsync();
+                    var value = wrapper.Globals.GetValue("realm");
+                    string realm1 = null;
+                    if (value != null && value.Type == LuaType.String)
+                        realm1 = value.String.Value;
+                    if (string.IsNullOrEmpty(characterName1) || string.IsNullOrEmpty(realm1))
+                        continue;
+                    if (characterName == characterName1 && realm == realm1)
+                        return p;
+                }
+                return _freeProcessPool.First();
+            }
+            var proc = await StartNewAsync(cancel, pause);
+            _processes.Add(proc);
+            return proc;
+        }
+
+        public async Task<Process> AllocateAsync(CancellationToken cancel, PauseToken pause)
+        {
             if (_freeProcessPool.Any())
                 return _freeProcessPool.First();
-            var proc = await StartNewAsync();
+            var proc = await StartNewAsync(cancel, pause);
             _processes.Add(proc);
             return proc;
         }

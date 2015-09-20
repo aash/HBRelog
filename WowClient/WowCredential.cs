@@ -11,14 +11,15 @@ using Shared;
 namespace WowClient
 {
     [Serializable]
-    public class WowSettings : INotifyPropertyChanged
+    public class WowCredential : INotifyPropertyChanged
     {
-        public WowSettings()
+        public WowCredential()
         {
             Login = "Email@battle.net";
             Password = Realm = AuthenticatorSerial = AuthenticatorRestoreCode = "";
             AccountName = "WoW1";
             Region = WowRegion.Auto;
+            Characters = new HashSet<string>();
         }
 
         public bool IsValid()
@@ -154,14 +155,14 @@ namespace WowClient
             set { _characterName = value; NotifyPropertyChanged("CharacterName"); }
         }
 
-        private List<string> _accountCharacterNames;
+        private HashSet<string> _accountCharacterNames;
         /// <summary>
-        /// Contains a character name list seen on the account.
+        /// Keeps a characters list belonging to the account in the form of "CharacterName-Realm".
         /// </summary>
-        public List<string> AccountCharacterNames
+        public HashSet<string> Characters
         {
             get { return _accountCharacterNames; }
-            set { _accountCharacterNames = value; NotifyPropertyChanged("AccountCharacterNames"); }
+            set { _accountCharacterNames = value; NotifyPropertyChanged("Characters"); }
         }
 
         private string _realm;
@@ -174,44 +175,11 @@ namespace WowClient
             set { _realm = value; NotifyPropertyChanged("Realm"); }
         }
 
-        private int _wowWindowWidth;
-        public int WowWindowWidth
-        {
-            get { return _wowWindowWidth; }
-            set { _wowWindowWidth = value; NotifyPropertyChanged("WowWindowWidth"); }
-        }
-
-        private int _wowWindowHeight;
-        public int WowWindowHeight
-        {
-            get { return _wowWindowHeight; }
-            set { _wowWindowHeight = value; NotifyPropertyChanged("WowWindowHeight"); }
-        }
-
-        private int _wowWindowLeft;
-        public int WowWindowLeft
-        {
-            get { return _wowWindowLeft; }
-            set { _wowWindowLeft = value; NotifyPropertyChanged("WowWindowLeft"); }
-        }
-
-        private int _wowWindowTop;
-        public int WowWindowTop
-        {
-            get { return _wowWindowTop; }
-            set { _wowWindowTop = value; NotifyPropertyChanged("WowWindowTop"); }
-        }
-
         private WowRegion _region;
         public WowRegion Region
         {
             get { return _region; }
             set { _region = value; NotifyPropertyChanged("Region"); }
-        }
-
-        public WowSettings ShadowCopy()
-        {
-            return (WowSettings)MemberwiseClone();
         }
 
         public event PropertyChangedEventHandler PropertyChanged;

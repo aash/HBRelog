@@ -27,6 +27,7 @@ using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Tasks.Dataflow;
 using System.Windows.Forms;
 
 namespace Shared
@@ -447,7 +448,10 @@ namespace Shared
             var ms = pollDelayMilliseconds;
             while (!await predicate() && isNotTimeout)
             {
-                cancel.ThrowIfCancellationRequested();
+                if (cancel.IsCancellationRequested)
+                {
+                    return false;
+                }
                 await pause.WaitWhilePausedAsync();
                 isNotTimeout = t.ElapsedMilliseconds < timeout.TotalMilliseconds;
                 await Task.Delay(ms, cancel);
@@ -472,7 +476,10 @@ namespace Shared
             var ms = pollDelayMilliseconds;
             while (!predicate() && isNotTimeout)
             {
-                cancel.ThrowIfCancellationRequested();
+                if (cancel.IsCancellationRequested)
+                {
+                    return false;
+                }
                 await pause.WaitWhilePausedAsync();
                 isNotTimeout = t.ElapsedMilliseconds < timeout.TotalMilliseconds;
                 await Task.Delay(ms, cancel);
@@ -542,5 +549,46 @@ namespace Shared
         //{
         //    return args.Aggregate("", (a, b) => a != "" ? a + separator + b : b);
         //}
+
+        public async static Task<bool> WaitUntilAsync(this Func<bool> predicate, TimeSpan timeout, int pollDelayMillisecond = 10)
+        {
+            return await Utility.WaitUntilAsync(predicate, timeout, pollDelayMillisecond);
+        }
+        
+        public async static Task<bool> WaitUntilAsync(this Func<Task<bool>> predicate, TimeSpan timeout, int pollDelayMillisecond = 10)
+        {
+            return await Utility.WaitUntilAsync(predicate, timeout, pollDelayMillisecond);
+        }
     }
+
+    public class AsyncAutoResetEvent
+    {
+        private readonly BufferBlock<int> _signal = new BufferBlock<int>();
+
+        /// <summary>
+        /// Waits for set.
+        /// </summary>
+        /// <param name="cancel"></param>
+        /// <returns>true -- if Set
+        /// false -- if Cancelled
+        /// </returns>
+        public async Task<bool> WaitOne(CancellationToken cancel)
+        {
+            try
+            {
+                await _signal.OutputAvailableAsync(cancel);
+            }
+            catch (TaskCanceledException)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        public void Set()
+        {
+            _signal.Post(0);
+        }
+    }
+
 }

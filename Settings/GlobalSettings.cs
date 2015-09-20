@@ -116,6 +116,9 @@ namespace HighVoltz.HBRelog.Settings
             }
         }
 
+        public string WowExePath { get; set; }
+        public string WowExeArgs { get; set; }
+
         // not serialized
         public List<string> FreeHBKeyPool
         {
@@ -282,6 +285,8 @@ namespace HighVoltz.HBRelog.Settings
 				root.Add(new XElement("SetGameWindowTitle", SetGameWindowTitle));
                 root.Add(new XElement("GameWindowTitle", GameWindowTitle));
                 root.Add(new XElement("HBKeyPool", HBKeyPool));
+                root.Add(new XElement("WowExePath", WowExePath));
+                root.Add(new XElement("WowExeArgs", WowExeArgs));
 
                 root.Add(new XElement("WowVersion", WowVersion));
 
@@ -431,6 +436,8 @@ namespace HighVoltz.HBRelog.Settings
 					settings.SetGameWindowTitle = GetElementValue(root.Element("SetGameWindowTitle"), true);
                     settings.GameWindowTitle = GetElementValue(root.Element("GameWindowTitle"), "{name} - {pid}");
                     settings.HBKeyPool = GetElementValue(root.Element("HBKeyPool"), "");
+                    settings.WowExePath = GetElementValue(root.Element("WowExePath"), "");
+                    settings.WowExeArgs = GetElementValue(root.Element("WowExeArgs"), "");
 
                     settings.GameStateOffset = GetElementValue(root.Element("GameStateOffset"), 0u);
                     // settings.FrameScriptExecuteOffset = GetElementValue(root.Element("FrameScriptExecuteOffset"), 0u);

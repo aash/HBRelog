@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 //using GreyMagic;
 using HighVoltz.HBRelog.FiniteStateMachine;
@@ -14,6 +15,8 @@ using HighVoltz.HBRelog.Settings;
 //using HighVoltz.HBRelog.WoW.Lua;
 using HighVoltz.HBRelog.WoW.States;
 //using Region = HighVoltz.HBRelog.WoW.FrameXml.Region;
+using WowClient;
+using WowSettings = HighVoltz.HBRelog.Settings.WowSettings;
 
 namespace HighVoltz.HBRelog.WoW
 {
@@ -25,6 +28,7 @@ namespace HighVoltz.HBRelog.WoW
         public WowManager(CharacterProfile profile)
         {
             Profile = profile;
+            Wrapper = new WowWrapper();
         }
 
         #region Fields
@@ -50,6 +54,7 @@ namespace HighVoltz.HBRelog.WoW
 
         public WowSettings Settings { get; private set; }
 
+        public WowWrapper Wrapper;
 
         public bool InGame { get; private set; }
         public Process GameProcess { get; internal set; }
@@ -114,16 +119,64 @@ namespace HighVoltz.HBRelog.WoW
 
         public void Start()
         {
-            lock (_lockObject)
+            IsRunning = true;
+            IsReadyToMonitor = false;
+            var task = Run();
+        }
+
+        public async Task<bool> Run()
+        {
+            var proc = await HbRelogManager.WowProcessPool.AllocateAsync();
+            if (proc == null)
             {
-                if (File.Exists(Settings.WowPath))
+                return false;
+            }
+            GameProcess = proc;
+            if (!await Wrapper.AttachToProcessAsync(proc))
+            {
+                return false;
+            }
+            Log.Write("attached to wow client");
+            var s = new WowClient.WowCredential
+            {
+                Login = Settings.Login,
+                Password = Settings.Password,
+                Realm = Settings.ServerName,
+                CharacterName = Settings.CharacterName,
+                AuthenticatorSerial = Settings.AuthenticatorSerial,
+                AuthenticatorRestoreCode = Settings.AuthenticatorRestoreCode,
+            };
+            Log.Write("getting into the game");
+            if (!await Wrapper.GetIntoTheGameAsync(s))
+            {
+                return false;
+            }
+            Log.Write("game client ready");
+            StartupSequenceIsComplete = true;
+            Log.Write("waiting honorbuddy to start before start to monitor");
+            await Shared.Utility.WaitUntilAsync(() => IsReadyToMonitor, TimeSpan.FromMinutes(1), 500);
+            Log.Write("start to monitor");
+            return await MonitorAsync();
+        }
+
+        public bool IsReadyToMonitor { get; set; }
+
+        public async Task<bool> MonitorAsync()
+        {
+            while (true)
+            {
+                // TODO check resposiveness
+                var name = await Wrapper.CurrentCharacterNameAsync();
+                if (name != Settings.CharacterName)
                 {
-                    IsRunning = true;
+                    // TODO terminate
+                    return false;
                 }
-                else
-                    MessageBox.Show(string.Format("path to WoW.exe does not exist: {0}", Settings.WowPath));
+                await Task.Delay(1000);
             }
         }
+
+        public bool IsRunning { get; set; }
 
         public void Stop()
         {

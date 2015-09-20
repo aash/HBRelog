@@ -90,7 +90,7 @@ namespace HighVoltz.HBRelog.WoW
 					_lockOwner.Profile.Status = "Starting WoW";
 
 					_lockOwner.StartupSequenceIsComplete = false;
-					_lockOwner.LuaManager.Memory = null;
+					//_lockOwner.LuaManager.Memory = null;
 
 					bool lanchingWoW = _lockOwner.Settings.WowPath.IndexOf("WoW.exe", StringComparison.InvariantCultureIgnoreCase) != -1
                          || _lockOwner.Settings.WowPath.IndexOf("WoWB.exe", StringComparison.InvariantCultureIgnoreCase) != -1 // Beta WoW
@@ -162,7 +162,7 @@ namespace HighVoltz.HBRelog.WoW
 					}
 				    if (_lockOwner.ReusedGameProcess == null)
 				    {
-                        _lockOwner.LuaManager.Memory = new ExternalProcessReader(_wowProcess);
+                        //_lockOwner.LuaManager.Memory = new ExternalProcessReader(_wowProcess);
                     }
                     _lockOwner.GameProcess = _wowProcess;
                     _wowProcess = null;

@@ -66,6 +66,10 @@ namespace HighVoltz.HBRelog
                         HonorbuddyManager.SetSettings(Profile.Settings.HonorbuddySettings);
                     HonorbuddyManager.Start();
                 }
+                if (WowManager.StartupSequenceIsComplete && HonorbuddyManager.StartupSequenceIsComplete)
+                {
+                    WowManager.IsReadyToMonitor = true;
+                }
                 if (HonorbuddyManager.IsRunning)
                     HonorbuddyManager.Pulse();
             }

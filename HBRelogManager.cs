@@ -23,10 +23,11 @@ using System.ServiceModel;
 using System.Windows;
 using System.ComponentModel;
 using System.Linq;
+using WowClient;
 
 namespace HighVoltz.HBRelog
 {
-    class HbRelogManager
+    class HbRelogManager : IDisposable
     {
 
         public static Visibility HiddenIfDebug
@@ -54,6 +55,8 @@ namespace HighVoltz.HBRelog
 
         public static RemotingApi remoting;
 
+        public static WowProcessPool WowProcessPool;
+
         static HbRelogManager()
         {
             try
@@ -62,6 +65,8 @@ namespace HighVoltz.HBRelog
                 if (MainWindow.Instance == null || DesignerProperties.GetIsInDesignMode(MainWindow.Instance))
                     return; 
                 Settings = GlobalSettings.Load();
+
+                WowProcessPool = new WowProcessPool(Settings.WowExePath, Settings.WowExeArgs);
 
                 Settings.FreeHBKeyPool.Clear();
                 if (!string.IsNullOrEmpty(Settings.HBKeyPool))
@@ -98,27 +103,27 @@ namespace HighVoltz.HBRelog
                     if (profile.TaskManager.HonorbuddyManager.BotProcess == null)
                         return;
                     var pid = profile.TaskManager.HonorbuddyManager.BotProcess.Id;
-                    if (Clients.ContainsKey(pid))
-                    {
-                        try
-                        {
-                            if (args.PropertyName != "Status" || profile.Status != "Honorbuddy Startup Complete")
-                                return;
-                            if (profile.TaskManager.HonorbuddyManager.Settings.AutoStartBot)
-                            {
-                                Log.Write(string.Format("Starting bot {0} {1}",
-                                    profile.TaskManager.HonorbuddyManager.Settings.BotBase,
-                                    profile.TaskManager.HonorbuddyManager.Settings.HonorbuddyProfile));
-                                Clients[pid].StartBot(
-                                    profile.TaskManager.HonorbuddyManager.Settings.BotBase,
-                                    profile.TaskManager.HonorbuddyManager.Settings.HonorbuddyProfile);
-                            }
-                        }
-                        catch (Exception)
-                        {
-                            Clients.Remove(pid);
-                        }
-                    }
+                    //if (Clients.ContainsKey(pid))
+                    //{
+                    //    try
+                    //    {
+                    //        if (args.PropertyName != "Status" || profile.Status != "Honorbuddy Startup Complete")
+                    //            return;
+                    //        if (profile.TaskManager.HonorbuddyManager.Settings.AutoStartBot)
+                    //        {
+                    //            Log.Write(string.Format("Starting bot {0} {1}",
+                    //                profile.TaskManager.HonorbuddyManager.Settings.BotBase,
+                    //                profile.TaskManager.HonorbuddyManager.Settings.HonorbuddyProfile));
+                    //            Clients[pid].StartBot(
+                    //                profile.TaskManager.HonorbuddyManager.Settings.BotBase,
+                    //                profile.TaskManager.HonorbuddyManager.Settings.HonorbuddyProfile);
+                    //        }
+                    //    }
+                    //    catch (Exception)
+                    //    {
+                    //        Clients.Remove(pid);
+                    //    }
+                    //}
                 });
                 IsInitialized = true;
             }
@@ -132,6 +137,7 @@ namespace HighVoltz.HBRelog
         static void DoWork()
         {
             int pulseStartTime = 0;
+            WowProcessPool.InitializeAsync().Wait();
             while (true)
             {
                 try
@@ -218,6 +224,11 @@ namespace HighVoltz.HBRelog
                 process.Kill();
                 Log.Write("Killing crashed Honorbuddy process");
             }
+        }
+
+        public void Dispose()
+        {
+            WowProcessPool.Dispose();
         }
     }
 }

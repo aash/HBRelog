@@ -36,10 +36,11 @@ namespace HighVoltz.HBRelog.Remoting
 			if (profile != null)
 			{
 				profile.TaskManager.HonorbuddyManager.SetStartupSequenceToComplete();
-			    if (HbRelogManager.Clients.ContainsKey(hbProcID))
-			        HbRelogManager.Clients.Remove(hbProcID);
-                HbRelogManager.Clients.Add(hbProcID,
-                    OperationContext.Current.GetCallbackChannel<IRemotingApiCallback>());
+                //if (HbRelogManager.Clients.ContainsKey(hbProcID))
+                //    HbRelogManager.Clients.Remove(hbProcID);
+                //HbRelogManager.Clients.Add(hbProcID,
+                //    OperationContext.Current.GetCallbackChannel<IRemotingApiCallback>());
+			    var cc = OperationContext.Current;
 				profile.Log("Opened communication with HBRelogHelper");
 				return true;
 			}

@@ -4,8 +4,6 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.Linq;
-using System.Reactive.Linq;
-using System.Reactive.Threading.Tasks;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -643,7 +641,7 @@ namespace WowClient
         public async Task<bool> LogoutAsync(WowCredential credential, CancellationToken cancel, PauseToken pause)
         {
             if (!IsInGame)
-                return false;
+                return true;
 
             if (!await SendChatAsync("/logout"))
             {
@@ -682,7 +680,7 @@ namespace WowClient
                     && Regex.IsMatch(w.Text, "^\\w+$"))
                 .Select(w => w.Text.Split(' ')[0]).ToList();
 
-            if (!activeCharNames.Contains(credential.CharacterName) || realm != credential.Realm)
+            if (credential == null || !activeCharNames.Contains(credential.CharacterName) || realm != credential.Realm)
             {
                 SendKey(Keys.Escape);
                 if (!await Utility.WaitUntilAsync(async () => await IsLoginScreenAsync(), 60000, 500))
@@ -805,7 +803,7 @@ namespace WowClient
                 await scrollDown.ClickAsync();
             }
             await realmBtn.ClickAsync();
-            await realmBtn.ClickAsync();
+            SendKey(Keys.Enter);
             if (!await Utility.WaitUntilAsync(async () => await IsCharacterSelectionScreenAsync(), 10000, 300))
             {
                 Console.WriteLine("failed to detect character selection screen");
@@ -832,6 +830,21 @@ namespace WowClient
                 throw new ArgumentException("credential == null");
             if (!credential.IsValid())
                 throw new ArgumentException("credential.IsValid() == false");
+            if (await IsRealmSelectScreenAsync())
+            {
+                SendKey(Keys.Escape);
+                if (!await Utility.WaitUntilAsync(async () => await IsCharacterSelectionScreenAsync(), 60000, 500))
+                {
+                    Console.WriteLine("can not reach char selection screen");
+                    return null;
+                }
+                SendKey(Keys.Escape);
+                if (!await Utility.WaitUntilAsync(async () => await IsLoginScreenAsync(), 60000, 500))
+                {
+                    Console.WriteLine("can not reach login screen");
+                    return null;
+                }
+            }
             if (IsInGame)
             {
                 var charName = await CurrentCharacterNameAsync();

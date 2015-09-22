@@ -57,18 +57,6 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
-    <Reference Include="System.Reactive.Core">
-      <HintPath>..\packages\Rx-Core.2.2.5\lib\net45\System.Reactive.Core.dll</HintPath>
-    </Reference>
-    <Reference Include="System.Reactive.Interfaces">
-      <HintPath>..\packages\Rx-Interfaces.2.2.5\lib\net45\System.Reactive.Interfaces.dll</HintPath>
-    </Reference>
-    <Reference Include="System.Reactive.Linq">
-      <HintPath>..\packages\Rx-Linq.2.2.5\lib\net45\System.Reactive.Linq.dll</HintPath>
-    </Reference>
-    <Reference Include="System.Reactive.PlatformServices">
-      <HintPath>..\packages\Rx-PlatformServices.2.2.5\lib\net45\System.Reactive.PlatformServices.dll</HintPath>
-    </Reference>
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
@@ -103,16 +91,12 @@
     <Compile Include="Lua\LuaValue.cs" />
     <Compile Include="Memory.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="WowProcessPool.cs" />
     <Compile Include="WowCredential.cs" />
     <Compile Include="WowWrapper.cs" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\Libs\Authenticator\Authenticator.csproj">
-      <Project>{EAF2D5CE-D817-453A-8A32-3D531570AE04}</Project>
+      <Project>{eaf2d5ce-d817-453a-8a32-3d531570ae04}</Project>
       <Name>Authenticator</Name>
     </ProjectReference>
     <ProjectReference Include="..\Shared\Shared.csproj">

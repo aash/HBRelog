@@ -147,7 +147,8 @@ namespace HighVoltz.HBRelog.WoW
                 AuthenticatorRestoreCode = Settings.AuthenticatorRestoreCode,
             };
             Log.Write("getting into the game");
-            if (!await Wrapper.GetIntoTheGameAsync(s))
+            var cred = await Wrapper.GetIntoTheGameAsync(s);
+            if (cred == null)
             {
                 return false;
             }

@@ -49,7 +49,7 @@ namespace HonorbuddyClient
         }
         [XmlElement(ElementName = "Key")]
         public List<string> Keys { get; private set; }
-        public bool IsAny { get { return Keys.Any(); }}
+        public bool IsEmpty { get { return !Keys.Any(); }}
         public IDisposable Allocate()
         {
             string key;

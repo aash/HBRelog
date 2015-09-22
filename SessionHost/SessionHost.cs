@@ -2,17 +2,20 @@
 using System.CodeDom;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.ServiceModel;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 using System.Xml.Serialization;
 using HonorbuddyClient;
 using Shared;
 using WowClient;
+using WowClient.Lua;
 
-namespace SessionHost
+namespace Fenix
 {
 
     public interface ISessionHostService
@@ -22,6 +25,8 @@ namespace SessionHost
         void ResumeSession(string sessionName);
         void KillSession(string sessionName);
         void StopSession(string sessionName);
+        void CreateSession(string sessionName, Session session);
+        void RemoveSession(string sessionName);
     }
 
     [Serializable]
@@ -53,14 +58,145 @@ namespace SessionHost
     {
         // session host provides list of sessions
         // which can be edited add/remove sessions
-        List<Session> Sessions { get; }
-        HonorbuddyKeyPool HonorbuddyKeyPool { get; }
-        string HonorbuddyExePath { get; }
-        string WowExePath { get; }
-        string WowExeArgs { get; }
-        string CombatRoutine { get; }
+        HonorbuddyKeyPool HonorbuddyKeyPool { get; set; }
+        string HonorbuddyExePath { get; set; }
+        string WowExePath { get; set; }
+        string WowExeArgs { get; set; }
+        string DefaultCombatRoutine { get; set; }
+        void StartSession(string sessionName);
+        void StopSession(string sessionName);
     }
 
+    class SessionHostSevice
+    {
+
+        public void Initialize()
+        {
+            
+        }
+    }
+
+    public class WowProcessPool : IDisposable, IChildItem<SessionHost>
+    {
+
+        private readonly List<Process> _processes;
+        private readonly List<Process> _freeProcessPool;
+
+        public WowProcessPool(SessionHost parent)
+        {
+            ParentObject = parent;
+            _processes = new List<Process>();
+            _freeProcessPool = new List<Process>();
+        }
+
+        public async Task<bool> InitializeAsync()
+        {
+            foreach (var proc in Process.GetProcessesByName("wow"))
+            {
+                var wrapper = new WowWrapper();
+                if (!await wrapper.AttachToProcessAsync(proc))
+                    continue;
+                _freeProcessPool.Add(proc);
+                wrapper.Dispose();
+            }
+            return true;
+        }
+
+        private async Task<Process> StartNewAsync()
+        {
+            return await StartNewAsync(new CancellationToken(), new PauseToken());
+        }
+
+        private async Task<Process> StartNewAsync(CancellationToken cancel, PauseToken pause)
+        {
+            var proc = Process.Start(ParentObject.WowExePath, ParentObject.WowExeArgs);
+            if (proc == null)
+                return null;
+            if (!await Utility.WaitUntilAsync(() => proc.MainWindowHandle != IntPtr.Zero, cancel, pause, TimeSpan.FromMinutes(2), 100))
+            {
+                if (!cancel.IsCancellationRequested)
+                    Console.WriteLine("wow process start timeout");
+                return null;
+            }
+            return proc;
+        }
+
+        public async Task<Process> AllocateAsync()
+        {
+            return await AllocateAsync(new CancellationToken(), new PauseToken());
+        }
+
+        public async Task<Process> AllocateAsync(string characterName, string realm)
+        {
+            return await AllocateAsync(CancellationToken.None, new PauseToken(), characterName, realm);
+        }
+
+        public async Task<Process> AllocateAsync(CancellationToken cancel, PauseToken pause, string characterName, string realm)
+        {
+            if (_freeProcessPool.Any())
+            {
+                foreach (var p in _freeProcessPool)
+                {
+                    var wrapper = new WowWrapper();
+                    if (!await wrapper.AttachToProcessAsync(p, cancel, pause))
+                    {
+                        wrapper.Dispose();
+                        continue;
+                    }
+                    var characterName1 = await wrapper.CurrentCharacterNameAsync();
+                    var value = wrapper.Globals.GetValue("realm");
+                    string realm1 = null;
+                    if (value != null && value.Type == LuaType.String)
+                        realm1 = value.String.Value;
+                    if (string.IsNullOrEmpty(characterName1) || string.IsNullOrEmpty(realm1))
+                        continue;
+                    if (characterName == characterName1 && realm == realm1)
+                        return p;
+                }
+                return _freeProcessPool.First();
+            }
+            var proc = await StartNewAsync(cancel, pause);
+            _processes.Add(proc);
+            return proc;
+        }
+
+        public async Task<Process> AllocateAsync(CancellationToken cancel, PauseToken pause)
+        {
+            if (_freeProcessPool.Any())
+                return _freeProcessPool.First();
+            var proc = await StartNewAsync(cancel, pause);
+            _processes.Add(proc);
+            return proc;
+        }
+
+        public void Free(int id)
+        {
+            if (_freeProcessPool.Any(p => p.Id == id))
+                throw new ArgumentException("process is not in use");
+            var proc = _processes.FirstOrDefault(p => p.Id == id);
+            if (proc == null)
+                throw new ArgumentException("process does not belong to the pool");
+            _processes.Remove(proc);
+            _freeProcessPool.Add(proc);
+        }
+
+        public void Dispose()
+        {
+            foreach (var proc in _processes)
+            {
+                proc.Kill();
+            }
+        }
+
+        public SessionHost ParentObject { get; internal set; }
+
+        SessionHost IChildItem<SessionHost>.Parent
+        {
+            get { return ParentObject; }
+            set { ParentObject = value; }
+        }
+        public SessionHost  Parent { get; set; }
+    }
 
 
     /// <summary>
@@ -70,20 +206,65 @@ namespace SessionHost
     public class SessionHost : ISessionHost, IDisposable
     {
         private readonly WowProcessPool _wowProcessPool;
-        public WowProcessPool WowProcessPool { get { return _wowProcessPool; } }
-        public List<Session> SessionList { get; private set; }
-        public List<Session> Sessions { get; private set; }
-        public HonorbuddyKeyPool HonorbuddyKeyPool { get; private set; }
-        public string HonorbuddyExePath { get; private set; }
-        public string WowExePath { get; private set; }
-        public string WowExeArgs { get; private set; }
-        public string CombatRoutine { get; private set; }
+        public WowProcessPool WowProcessPool { get { return _wowProcessPool; }}
+        public HonorbuddyKeyPool HonorbuddyKeyPool { get; set; }
+        public WowCredentialsRepository WowCredentials { get; set; }
+
+        [XmlIgnore]
+        public string SessionXmlLocation { get; private set; }
+
+        [XmlIgnore]
+        public static string SessionXmlFileExtension = ".session";
+
+        public string HonorbuddyExePath { get; set; }
+        public string WowExePath { get; set; }
+        public string WowExeArgs { get; set; }
+        public string DefaultCombatRoutine { get; set; }
+
+        private string GetSessionXmlPath(string sessionName)
+        {
+            return Path.Combine(SessionXmlLocation, sessionName + SessionXmlFileExtension);
+        }
+
+        private Session LoadSession(string xmlFilePath)
+        {
+            Session result;
+            using (var reader = XmlReader.Create(xmlFilePath))
+            {
+                result = (Session)(new XmlSerializer(typeof(Session))
+                    .Deserialize(reader));
+            }
+            return result;
+        }
+
+        private void SaveSession(string xmlFilePath, Session session)
+        {
+            using (var writer = XmlWriter.Create(xmlFilePath,
+                new XmlWriterSettings() { Indent = true }))
+            {
+                var serializer = new XmlSerializer(typeof(Session));
+                serializer.Serialize(writer, session);
+            }
+        }
+
+        public void StartSession(string sessionName)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void StopSession(string sessionName)
+        {
+            throw new NotImplementedException();
+        }
+
+        [XmlElement(ElementName = "Session")]
+        public ChildItemCollection<SessionHost, Session> Sessions { get; set; }
 
         public SessionHost()
         {
-            _wowProcessPool = new WowProcessPool(@"C:\hb_home\wow\Wow.exe", @"-noautolaunch64bit");
+            Sessions = new ChildItemCollection<SessionHost, Session>(this);
+            _wowProcessPool = new WowProcessPool(this);
             _wowProcessPool.InitializeAsync().Wait();
-            //    Config.WowExePath, Config.WowExeArgs);
         }
 
         public void Dispose()
@@ -93,16 +274,19 @@ namespace SessionHost
     }
 
     [Serializable]
-    abstract public class SessionTask
+    [XmlInclude(typeof(LoginSessionTask))]
+    [XmlInclude(typeof(LogoutSessionTask))]
+    [XmlInclude(typeof(GeneralSessionTask))]
+    abstract public class SessionTask : IChildItem<Session>
     {
-        protected Session ParentSession;
-
-        protected SessionTask(Session session)
-        {
-            ParentSession = session;
-        }
-
         abstract public Task<bool> RunAsync(CancellationToken cancel, PauseToken pause);
+        [XmlIgnore]
+        public Session ParentObject { get; internal set; }
+        Session IChildItem<Session>.Parent
+        {
+            get { return ParentObject; }
+            set { ParentObject = value; }
+        }
     }
 
     [Flags]
@@ -113,6 +297,78 @@ namespace SessionHost
         Custom = 4,
     }
 
+    [Serializable]
+    public class LoginSessionTask : SessionTask
+    {
+        public string CharacterName { get; set; }
+        [XmlIgnore]
+        public bool IsCompleted { get; private set; }
+
+        public override async Task<bool> RunAsync(CancellationToken cancel, PauseToken pause)
+        {
+            int WowGetIntoGameMaxRetry = 10;
+
+            IsCompleted = false;
+
+            // get into the game
+            // retry pattern
+            int retryCount = 0;
+            WowCredential credUpd = null;
+            WowCredential cred = ParentObject.ParentObject.WowCredentials[CharacterName];
+            while (credUpd == null
+                   && retryCount < WowGetIntoGameMaxRetry)
+            {
+                credUpd = await ParentObject.Wow.GetIntoTheGameAsync(cred, cancel, pause);
+                retryCount++;
+                Console.WriteLine("Wow.GetIntoTheGameAsync retry {0}", retryCount);
+            }
+            if (retryCount >= WowGetIntoGameMaxRetry || credUpd == null)
+            {
+                Console.WriteLine("could not get into the game, retry count overflow");
+                return false;
+            }
+            IsCompleted = true;
+
+            return true;
+        }
+    }
+    [Serializable]
+
+    public class LogoutSessionTask : SessionTask
+    {
+        [XmlIgnore]
+        public bool IsCompleted { get; private set; }
+
+        public override async Task<bool> RunAsync(CancellationToken cancel, PauseToken pause)
+        {
+            int WowLogoutMaxRetry = 10;
+
+            IsCompleted = false;
+
+            // logout
+            // retry pattern
+            int retryCount = 0;
+            if (ParentObject.Wow.IsInGame)
+            {
+                while (!await ParentObject.Wow.LogoutAsync(new WowCredential(), cancel, pause)
+                       && retryCount < WowLogoutMaxRetry)
+                {
+                    retryCount++;
+                    Console.WriteLine("Wow.LogoutAsync retry {0}", retryCount);
+                }
+                if (retryCount >= WowLogoutMaxRetry)
+                {
+                    Console.WriteLine("could not logout, retry count overflow");
+                    return false;
+                }
+            }
+            IsCompleted = true;
+
+            return true;
+        }
+    }
+
+    [Serializable]
     public class GeneralSessionTask : SessionTask
     {
         public string CharacterName { get; set; }
@@ -120,16 +376,16 @@ namespace SessionHost
         public string ProfilePath { get; set; }
         public string CombatRoutine { get; set; }
         public TaskStopTrigger StopTrigger { get; set; }
+        // TODO workaround unserializable TimeSpan
         public TimeSpan Timeout { get; set; }
 
         private readonly AsyncAutoResetEvent _taskCompletedEvent;
         private CancellationTokenSource _cancelIfInvalidState;
-        private readonly SessionHost _sessionHost;
+        [XmlIgnore]
         public bool IsCompleted { get; private set; }
 
-        public GeneralSessionTask(Session session) : base(session)
+        public GeneralSessionTask()
         {
-            _sessionHost = session.SessionHost;
             _taskCompletedEvent = new AsyncAutoResetEvent();
         }
 
@@ -143,22 +399,14 @@ namespace SessionHost
             // get into the game
             // retry pattern
             int retryCount = 0;
-            var cred = new WowCredential()
-            {
-                Login = "wobblybooz@gmail.com",
-                Password = "dfh43kd$sk645*",
-                CharacterName = "Алгебраична",
-                Realm = "Пиратская бухта",
-                AuthenticatorSerial = "EU-1509-1275-8745",
-                AuthenticatorRestoreCode = "55748B78MB"
-            };
             WowCredential credUpd = null;
+            WowCredential cred = ParentObject.ParentObject.WowCredentials[CharacterName];
             while (credUpd == null
                    && retryCount < WowGetIntoGameMaxRetry)
             {
-                credUpd = await ParentSession.Wow.GetIntoTheGameAsync(cred, cancel, pause);
+                credUpd = await ParentObject.Wow.GetIntoTheGameAsync(cred, cancel, pause);
                 retryCount++;
-                Console.WriteLine("_wowWrapper.GetIntoTheGameAsync retry {0}", retryCount);
+                Console.WriteLine("Wow.GetIntoTheGameAsync retry {0}", retryCount);
             }
             if (retryCount >= WowGetIntoGameMaxRetry || credUpd == null)
             {
@@ -177,10 +425,12 @@ namespace SessionHost
             // start honorbuddy and prepare proxy
             // retry pattern
             retryCount = 0;
-            if (_sessionHost.HonorbuddyKeyPool.Any)
-            .Allocate()
-            while ((honorbuddy = await HonorbuddyProxy.Create(_sessionHost.HonorbuddyExePath,
-                , ParentSession.Wow.WowProcess.Id,
+            if (ParentObject.ParentObject.HonorbuddyKeyPool.IsEmpty)
+                return false;
+            while ((honorbuddy = await HonorbuddyProxy.Create(
+                ParentObject.ParentObject.HonorbuddyExePath,
+                ParentObject.ParentObject.HonorbuddyKeyPool.Allocate(),
+                ParentObject.Wow.WowProcess.Id,
                 CombatRoutine)) == null && retryCount < HonorbuddyCreateMaxRetry)
             {
                 retryCount++;
@@ -235,19 +485,6 @@ namespace SessionHost
         }
     }
 
-    public class CharacterRepository
-    {
-        public static WowCredential GetSettings(string characterName)
-        {
-            return new WowCredential();
-        }
-    }
-
-    //public class SessionRepository
-    //{
-    //    public 
-    //}
-
     public interface ISession
     {
         Task<bool> Run(CancellationToken cancel, PauseToken pause);
@@ -258,30 +495,28 @@ namespace SessionHost
     }
 
     [Serializable]
-    public class Session : IDisposable
+    public class Session : IDisposable, IChildItem<SessionHost>
     {
-        public SessionHost SessionHost { get; set; }
-        public readonly WowWrapper Wow;
+        internal WowWrapper Wow { get; private set; }
         private readonly CancellationTokenSource _cancelTokenSource;
         private readonly PauseTokenSource _pauseTokenSource;
-        private readonly WowProcessPool _wowProcessPool;
         private readonly CancellationToken _cancelToken;
         private readonly PauseToken _pauseToken;
         private Task<bool> _runTask;
 
         public string Name { get; set; }
-        public string Character { get; set; }
-        public Queue<SessionTask> TaskQueue { get; set; }
+        //public Queue<SessionTask> Tasks { get; set; }
+        [XmlElement(ElementName = "Task")]
+        public ChildItemCollection<Session, SessionTask> Tasks { get; set; }
 
-        public Session(SessionHost sessionHost)
+        public Session()
         {
-            SessionHost = sessionHost;
-            _wowProcessPool = sessionHost.WowProcessPool;
             _cancelTokenSource = new CancellationTokenSource();
             _cancelToken = _cancelTokenSource.Token;
             _pauseTokenSource = new PauseTokenSource();
             _pauseToken = _pauseTokenSource.Token;
             Wow = new WowWrapper();
+            Tasks = new ChildItemCollection<Session, SessionTask>(this);
             _runTask = null;
         }
 
@@ -297,7 +532,7 @@ namespace SessionHost
                 // allocate wow process
                 // retry pattern
                 while (
-                    (wowProcess = await _wowProcessPool.AllocateAsync(cancel, pause)) == null
+                    (wowProcess = await ParentObject.WowProcessPool.AllocateAsync(cancel, pause)) == null
                     && retryCount < WowAllocateMaxRetry)
                 {
                     retryCount++;
@@ -322,7 +557,7 @@ namespace SessionHost
                 && retryCount < WowAttachMaxRetry)
             {
                 retryCount++;
-                Console.WriteLine("_wowWrapper.AttachToProcessAsync retry {0}", retryCount);
+                Console.WriteLine("Wow.AttachToProcessAsync retry {0}", retryCount);
             }
             if (retryCount >= WowAttachMaxRetry)
             {
@@ -335,13 +570,13 @@ namespace SessionHost
 
         private async Task<bool> RunAsync(CancellationToken cancel, PauseToken pause)
         {
-            if (TaskQueue == null || TaskQueue.Count == 0)
+            if (Tasks == null || Tasks.Count == 0)
                 return true;
 
             if (!await RestoreWowProcess(cancel, pause))
                 return false;
 
-            var taskQueue = new Queue<SessionTask>(TaskQueue.ToList());
+            var taskQueue = new Queue<SessionTask>(Tasks.ToList());
             while (taskQueue.Any())
             {
                 if (cancel.IsCancellationRequested)
@@ -396,6 +631,15 @@ namespace SessionHost
             Wow.Dispose();
             _cancelTokenSource.Dispose();
 
+        }
+
+        [XmlIgnore]
+        public SessionHost ParentObject { get; internal set; }
+
+        SessionHost IChildItem<SessionHost>.Parent
+        {
+            get { return ParentObject; }
+            set { ParentObject = value; }
         }
     }
 }

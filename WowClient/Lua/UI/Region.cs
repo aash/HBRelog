@@ -173,22 +173,7 @@ namespace WowClient.Lua.UI
         public PointF ToWindowCoord()
         {
             var ret = new PointF();
-            //var gameFullScreenFrame = UIObject.GetUIObjectByName<Frame>(LuaManager, "GlueParent") ?? UIObject.GetUIObjectByName<Frame>(LuaManager, "UIParent");
-            var gameFullScreenFrame = this;
-            while (gameFullScreenFrame != null
-                && gameFullScreenFrame.Parent != null)
-            {
-                Region r;
-                try
-                {
-                    r = (Region)gameFullScreenFrame.Parent;
-                }
-                catch (Exception)
-                {
-                    break;
-                }
-                gameFullScreenFrame = r;
-            }
+            var gameFullScreenFrame = Get<Frame>(Wrapper, "GlueParent") ?? Get<Frame>(Wrapper, "UIParent");
             if (gameFullScreenFrame == null)
                 return ret;
             var gameFullScreenFrameRect = gameFullScreenFrame.Rect;

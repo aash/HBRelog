@@ -101,7 +101,7 @@ namespace HighVoltz.HBRelog.Honorbuddy
             if (!_isExiting && BotProcess != null && !BotProcess.HasExitedSafe())
             {
                 _isExiting = true;
-                Task.Run(async () => await Utility.CloseBotProcessAsync(BotProcess, Profile))
+                Task.Run(async () => await Utility.CloseBotProcessAsync(BotProcess, Profile, "Honorbuddy"))
                     .ContinueWith(o =>
                     {
                         _isExiting = false;

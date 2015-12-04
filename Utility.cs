@@ -419,12 +419,31 @@ namespace HighVoltz.HBRelog
 
         #endregion
 
-        public static async Task CloseBotProcessAsync(Process proc, CharacterProfile profile)
+        public static async Task CloseBotProcessAsync(Process proc, CharacterProfile profile, String windowText = "")
         {
             var procName = proc.ProcessName;
             profile.Log("Attempting to close {0}", procName);
 
-            proc.CloseMainWindow();
+            // If a specific window name was given, close that window instead of main window.
+            // StartsWith() is used instead of Equals() because Honorbuddy appends " - attached to ..." in title
+            if( !String.IsNullOrEmpty(windowText))
+            {
+                IntPtr wHnd = NativeMethods.EnumerateProcessWindowHandles(proc.Id)
+                                .FirstOrDefault((p => NativeMethods.GetWindowText(p).StartsWith(windowText)));
+                if( wHnd != IntPtr.Zero )
+                {
+                    NativeMethods.PostMessage(wHnd, (uint)NativeMethods.Message.CLOSE, IntPtr.Zero, UIntPtr.Zero);
+                }
+                else
+                {
+                    proc.CloseMainWindow();
+                }
+            }
+            else
+            {
+                proc.CloseMainWindow();
+            }
+
             if (await WaitForProcessToExitAsync(proc, TimeSpan.FromSeconds(10)))
             {
                 profile.Log("Successfully closed {0} gracefully", procName);

@@ -1178,6 +1178,7 @@ namespace HighVoltz.HBRelog
 
         public enum Message : uint
         {
+            CLOSE = (0x0010),
             NCHITTEST = (0x0084),
             KEY_DOWN = (0x0100), //Key down
             KEY_UP = (0x0101), //Key Up
